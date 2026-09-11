@@ -3,7 +3,21 @@ const BASE = '/api';
 async function getJSON(path) {
   const res = await fetch(`${BASE}${path}`);
   if (!res.ok) {
-    throw new Error(`Error ${res.status} al llamar ${path}`);
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Error ${res.status} al llamar ${path}`);
+  }
+  return res.json();
+}
+
+async function postJSON(path, data) {
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    throw new Error(body.error || `Error ${res.status} al llamar ${path}`);
   }
   return res.json();
 }
@@ -44,4 +58,24 @@ export function fetchTopPosts(clientId, filters, limit = 5) {
 
 export function fetchInsights(clientId, filters) {
   return getJSON(`/clients/${clientId}/insights${buildQuery(filters)}`);
+}
+
+export function fetchConnectionStatus(clientId) {
+  return getJSON(`/auth/status/${clientId}`);
+}
+
+export function getConnectUrl(clientId) {
+  return `${BASE}/auth/facebook/login?clientId=${encodeURIComponent(clientId)}`;
+}
+
+export function fetchPendingSelection(token) {
+  return getJSON(`/auth/pending/${token}`);
+}
+
+export function selectPage(token, pageId) {
+  return postJSON('/auth/select', { token, pageId });
+}
+
+export function disconnectClient(clientId) {
+  return postJSON(`/auth/disconnect/${clientId}`, {});
 }

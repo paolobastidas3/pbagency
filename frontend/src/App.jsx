@@ -9,12 +9,44 @@ import ContentTypeChart from './components/ContentTypeChart';
 import PlatformComparison from './components/PlatformComparison';
 import TopPostsTable from './components/TopPostsTable';
 import InsightsPanel from './components/InsightsPanel';
-import { fetchClients, fetchSummary, fetchTimeSeries, fetchContentTypes, fetchTopPosts, fetchInsights } from './lib/api';
+import ConnectionPanel from './components/ConnectionPanel';
+import PageSelectModal from './components/PageSelectModal';
+import {
+  fetchClients,
+  fetchSummary,
+  fetchTimeSeries,
+  fetchContentTypes,
+  fetchTopPosts,
+  fetchInsights,
+  fetchConnectionStatus,
+  disconnectClient,
+} from './lib/api';
 import { formatNumber, formatPercent } from './lib/format';
+
+const CONNECT_ERROR_MESSAGES = {
+  denied: 'Cancelaste la autorización en Meta, así que no se conectó ninguna cuenta.',
+  invalid_request: 'La solicitud de conexión no era válida. Intenta de nuevo desde el dashboard.',
+  no_pages: 'Tu cuenta de Meta no administra ninguna Página de Facebook. Crea una Página y vincúlala a tu cuenta de Instagram profesional antes de conectar.',
+  meta_error: 'Meta devolvió un error al intercambiar el token. Revisa la consola del backend para más detalle.',
+};
+
+function readUrlState() {
+  const params = new URLSearchParams(window.location.search);
+  return {
+    connected: params.get('connected'),
+    connectError: params.get('connect_error'),
+    select: params.get('select'),
+    client: params.get('client'),
+  };
+}
+
+function clearUrlState() {
+  window.history.replaceState({}, '', window.location.pathname);
+}
 
 export default function App() {
   const [clients, setClients] = useState([]);
-  const [selectedId, setSelectedId] = useState(null);
+  const [selectedId, setSelectedId] = useState(() => readUrlState().client || null);
   const [platform, setPlatform] = useState('all');
   const [days, setDays] = useState('30');
 
@@ -26,11 +58,25 @@ export default function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  const [connectionStatus, setConnectionStatus] = useState(null);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [banner, setBanner] = useState(null);
+  const [pendingSelectToken, setPendingSelectToken] = useState(() => readUrlState().select || null);
+
+  useEffect(() => {
+    const urlState = readUrlState();
+    if (urlState.connected) setBanner({ type: 'success', text: 'Cuenta conectada correctamente. Ya se están mostrando datos en vivo.' });
+    if (urlState.connectError) {
+      setBanner({ type: 'error', text: CONNECT_ERROR_MESSAGES[urlState.connectError] || 'Ocurrió un error al conectar la cuenta.' });
+    }
+    if (urlState.connected || urlState.connectError || urlState.select) clearUrlState();
+  }, []);
+
   useEffect(() => {
     fetchClients()
       .then((data) => {
         setClients(data);
-        if (data.length) setSelectedId(data[0].id);
+        setSelectedId((current) => current || (data.length ? data[0].id : null));
       })
       .catch((err) => setError(err.message));
   }, []);
@@ -59,21 +105,64 @@ export default function App() {
       .finally(() => setLoading(false));
   }, [selectedId, platform, days]);
 
+  useEffect(() => {
+    if (!selectedId) return;
+    fetchConnectionStatus(selectedId)
+      .then(setConnectionStatus)
+      .catch(() => setConnectionStatus(null));
+  }, [selectedId, banner]);
+
+  async function handleDisconnect() {
+    if (!selectedId) return;
+    setDisconnecting(true);
+    try {
+      await disconnectClient(selectedId);
+      setBanner({ type: 'success', text: 'Cuenta desconectada. Volviendo a datos de ejemplo.' });
+      const status = await fetchConnectionStatus(selectedId);
+      setConnectionStatus(status);
+    } catch (err) {
+      setBanner({ type: 'error', text: err.message });
+    } finally {
+      setDisconnecting(false);
+    }
+  }
+
+  function handleSelectDone() {
+    setPendingSelectToken(null);
+    setBanner({ type: 'success', text: 'Cuenta conectada correctamente. Ya se están mostrando datos en vivo.' });
+  }
+
   const selectedClient = clients.find((c) => c.id === selectedId);
 
   return (
     <div className="app">
       <Sidebar clients={clients} selectedId={selectedId} onSelect={setSelectedId} />
       <main className="main">
+        {banner && (
+          <div className={`banner banner--${banner.type}`}>
+            {banner.text}
+          </div>
+        )}
+
         <div className="main-header">
           <div>
             <h2>{selectedClient ? selectedClient.name : 'Cargando…'}</h2>
             <p className="subtitle">
               Rendimiento de contenido en Instagram y Facebook
               {selectedClient ? ` · ${selectedClient.industry}` : ''}
+              {summary?.source === 'mock' ? ' · datos de ejemplo' : ''}
+              {summary?.source === 'live' ? ' · datos en vivo' : ''}
             </p>
           </div>
           <FilterBar platform={platform} onPlatformChange={setPlatform} days={days} onDaysChange={setDays} />
+          {selectedId && (
+            <ConnectionPanel
+              clientId={selectedId}
+              status={connectionStatus}
+              onDisconnect={handleDisconnect}
+              disconnecting={disconnecting}
+            />
+          )}
         </div>
 
         {error && <p className="empty-state">Ocurrió un error cargando los datos: {error}</p>}
@@ -131,6 +220,14 @@ export default function App() {
 
         {!error && loading && !summary && <p className="empty-state">Cargando métricas…</p>}
       </main>
+
+      {pendingSelectToken && (
+        <PageSelectModal
+          token={pendingSelectToken}
+          onDone={handleSelectDone}
+          onCancel={() => setPendingSelectToken(null)}
+        />
+      )}
     </div>
   );
 }

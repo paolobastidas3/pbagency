@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getClients, getClientById, getPostsByClient } from '../data/mockData.js';
+import { getClients, getClientById } from '../data/mockData.js';
+import { getPostsForClient } from '../services/dataProvider.js';
 import {
   buildSummary,
   buildTimeSeries,
@@ -27,10 +28,15 @@ function filterByRange(posts, rangeDays) {
   return posts.filter((p) => new Date(p.date) > cutoff);
 }
 
-function getFilteredPosts(req, clientId) {
-  const posts = getPostsByClient(clientId);
+async function getFilteredPosts(req, clientId) {
+  const days = Number(req.query.days) || 90;
+  const { posts, source } = await getPostsForClient(clientId, { days });
   const byPlatform = filterByPlatform(posts, req.query.platform);
-  return filterByRange(byPlatform, req.query.days);
+  return { posts: filterByRange(byPlatform, req.query.days), source };
+}
+
+function asyncRoute(handler) {
+  return (req, res, next) => handler(req, res).catch(next);
 }
 
 router.get('/', (req, res) => {
@@ -43,40 +49,55 @@ router.get('/:id', (req, res) => {
   res.json(client);
 });
 
-router.get('/:id/summary', (req, res) => {
-  const client = getClientById(req.params.id);
-  if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-  const posts = getFilteredPosts(req, req.params.id);
-  res.json(buildSummary(posts));
-});
+router.get(
+  '/:id/summary',
+  asyncRoute(async (req, res) => {
+    const client = getClientById(req.params.id);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const { posts, source } = await getFilteredPosts(req, req.params.id);
+    res.json({ ...buildSummary(posts), source });
+  })
+);
 
-router.get('/:id/timeseries', (req, res) => {
-  const client = getClientById(req.params.id);
-  if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-  const posts = getFilteredPosts(req, req.params.id);
-  res.json(buildTimeSeries(posts));
-});
+router.get(
+  '/:id/timeseries',
+  asyncRoute(async (req, res) => {
+    const client = getClientById(req.params.id);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const { posts } = await getFilteredPosts(req, req.params.id);
+    res.json(buildTimeSeries(posts));
+  })
+);
 
-router.get('/:id/content-types', (req, res) => {
-  const client = getClientById(req.params.id);
-  if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-  const posts = getFilteredPosts(req, req.params.id);
-  res.json(buildContentTypeBreakdown(posts));
-});
+router.get(
+  '/:id/content-types',
+  asyncRoute(async (req, res) => {
+    const client = getClientById(req.params.id);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const { posts } = await getFilteredPosts(req, req.params.id);
+    res.json(buildContentTypeBreakdown(posts));
+  })
+);
 
-router.get('/:id/top-posts', (req, res) => {
-  const client = getClientById(req.params.id);
-  if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-  const posts = getFilteredPosts(req, req.params.id);
-  const limit = Number(req.query.limit) || 5;
-  res.json(topPosts(posts, limit));
-});
+router.get(
+  '/:id/top-posts',
+  asyncRoute(async (req, res) => {
+    const client = getClientById(req.params.id);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const { posts } = await getFilteredPosts(req, req.params.id);
+    const limit = Number(req.query.limit) || 5;
+    res.json(topPosts(posts, limit));
+  })
+);
 
-router.get('/:id/insights', (req, res) => {
-  const client = getClientById(req.params.id);
-  if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
-  const posts = getFilteredPosts(req, req.params.id);
-  res.json(buildInsights(posts));
-});
+router.get(
+  '/:id/insights',
+  asyncRoute(async (req, res) => {
+    const client = getClientById(req.params.id);
+    if (!client) return res.status(404).json({ error: 'Cliente no encontrado' });
+    const { posts } = await getFilteredPosts(req, req.params.id);
+    res.json(buildInsights(posts));
+  })
+);
 
 export default router;
